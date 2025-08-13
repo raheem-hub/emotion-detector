@@ -81,7 +81,7 @@
                 </div>
 
                 <div id="videoWrapper" class="aspect-video rounded-xl overflow-hidden bg-slate-900 relative">
-                    <video id="video" autoplay playsinline muted class="h-full w-full object-cover"></video>
+                    <video id="video" autoplay playsinline muted class="h-full w-full object-contain bg-black"></video>
                     <canvas id="overlay"></canvas>
                     <!-- Top emotion badge -->
                     <div id="topEmotionBadge"
@@ -272,9 +272,14 @@
             const [w, h] = resolution.value.split('x').map(Number);
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: w }, height: { ideal: h } },
+                    video: {
+                        facingMode: "user", // front camera on mobile
+                        width: { ideal: w },
+                        height: { ideal: h }
+                    },
                     audio: false,
                 });
+
                 video.srcObject = stream;
                 await video.play();
                 sizeOverlayToVideo();
