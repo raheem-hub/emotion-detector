@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Webcam Emotion Detector</title>
+
+    <!-- Tailwind (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Tailwind config (optional nicer fonts)
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Noto Sans", "Ubuntu", "Cantarell", "Helvetica Neue", "Arial", "sans-serif"],
+                    },
+                },
+            },
+        };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- face-api.js (pure browser build) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+    <style>
+        /* Smooth animations for status badges */
+        .pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Keep video nicely rounded & overlay stacked */
+        #videoWrapper {
+            position: relative;
+        }
+
+        #overlay {
+            position: absolute;
+            left: 0;
+            top: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 text-slate-900 font-sans min-h-screen">
+    <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/70 backdrop-blur">
+        <div class="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between">
+            <h1 class="text-xl sm:text-2xl font-bold tracking-tight">Webcam Emotion Detector</h1>
+            <div id="modelStatus" class="text-xs sm:text-sm text-slate-600">Loading…</div>
+        </div>
+    </header>
+
+    <main class="mx-auto max-w-6xl px-4 py-6 grid gap-6 lg:grid-cols-[1fr,360px]">
+        <!-- Left: Camera / Canvas -->
+        <section class="">
+            <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" id="camDot"></span>
+                        <span id="camStatus" class="text-sm text-slate-600">Camera idle</span>
+                    </div>
+                    <div class="text-xs text-slate-500" id="fps">0 FPS</div>
+                </div>
+
+                <div id="videoWrapper" class="aspect-video rounded-xl overflow-hidden bg-slate-900 relative">
+                    <video id="video" autoplay playsinline muted class="h-full w-full object-cover"></video>
+                    <canvas id="overlay"></canvas>
+                    <!-- Top emotion badge -->
+                    <div id="topEmotionBadge"
+                        class="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1.5 text-sm font-medium shadow hidden">
+                    </div>
+                </div>
+
+                <div class="mt-4 flex flex-wrap items-center gap-2">
+                    <button id="startBtn"
+                        class="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-semibold shadow hover:bg-black focus:outline-none focus:ring-2 focus:ring-slate-400">Start
+                        Camera</button>
+                    <button id="stopBtn"
+                        class="rounded-xl bg-slate-100 text-slate-800 px-4 py-2 text-sm font-semibold shadow hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                        disabled>Stop</button>
+                    <button id="snapBtn"
+                        class="rounded-xl bg-indigo-600 text-white px-4 py-2 text-sm font-semibold shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        disabled>Snapshot</button>
+                    <label class="ml-auto inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input id="mirror" type="checkbox" class="rounded border-slate-300" checked>
+                        Mirror
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right: Controls -->
+        <aside class="space-y-6">
+            <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+                <h2 class="font-semibold mb-3">Detection Settings</h2>
+                <div class="grid grid-cols-1 gap-3">
+                    <label class="text-sm">Model path
+                        <input id="modelPath" type="text"
+                            class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+                            value="./models" />
+                    </label>
+                    <label class="text-sm">Resolution
+                        <select id="resolution"
+                            class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300">
+                            <option value="640x480">640 × 480</option>
+                            <option value="1280x720" selected>1280 × 720 (HD)</option>
+                            <option value="1920x1080">1920 × 1080 (Full HD)</option>
+                        </select>
+                    </label>
+                    <label class="text-sm">Detection Interval (ms)
+                        <input id="interval" type="number" min="50" step="10" value="120"
+                            class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300" />
+                    </label>
+                    <label class="text-sm">Min Confidence (0–1)
+                        <input id="minConf" type="number" min="0" max="1" step="0.01" value="0.5"
+                            class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300" />
+                    </label>
+                    <label class="text-sm">Face Detector
+                        <select id="detector"
+                            class="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300">
+                            <option value="tiny" selected>TinyFaceDetector (fast)</option>
+                            <option value="ssd">SSD Mobilenet (accurate, slower)</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+
+            <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+                <h2 class="font-semibold mb-3">Detected Emotions</h2>
+                <ul id="emotionList" class="text-sm space-y-1 text-slate-700">
+                    <li class="text-slate-400">No face yet…</li>
+                </ul>
+            </div>
+
+
+        </aside>
+    </main>
+
+    <footer class="mx-auto max-w-6xl px-4 pb-10 text-xs text-slate-500">
+        <p>All on-device. No video is uploaded anywhere. Works best with good lighting.</p>
+    </footer>
+
+    <script>
+        // ========= DOM ELEMENTS ========= //
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const videoWrapper = document.getElementById('videoWrapper');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const snapBtn = document.getElementById('snapBtn');
+        const camStatus = document.getElementById('camStatus');
+        const camDot = document.getElementById('camDot');
+        const modelStatus = document.getElementById('modelStatus');
+        const emotionList = document.getElementById('emotionList');
+        const fpsEl = document.getElementById('fps');
+        const mirror = document.getElementById('mirror');
+        const modelPath = document.getElementById('modelPath');
+        const resolution = document.getElementById('resolution');
+        const intervalInput = document.getElementById('interval');
+        const minConf = document.getElementById('minConf');
+        const detector = document.getElementById('detector');
+        const topEmotionBadge = document.getElementById('topEmotionBadge');
+
+        // ========= STATE ========= //
+        let stream = null;
+        let detecting = false;
+        let timer = null;
+        let lastTick = performance.now();
+
+        // ========= HELPERS ========= //
+        function setCamActive(active) {
+            camDot.className = `inline-flex h-2.5 w-2.5 rounded-full ${active ? 'bg-rose-500 pulse' : 'bg-slate-400'}`;
+            camStatus.textContent = active ? 'Camera on' : 'Camera idle';
+        }
+
+        function sizeOverlayToVideo() {
+            const rect = video.getBoundingClientRect();
+            overlay.width = video.videoWidth || rect.width;
+            overlay.height = video.videoHeight || rect.height;
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+        }
+
+        function fmtPct(x) { return `${(x * 100).toFixed(1)}%`; }
+
+        function bestEmotion(expressions) {
+            if (!expressions) return null;
+            return Object.entries(expressions).sort((a, b) => b[1] - a[1])[0];
+        }
+
+        function renderEmotionList(expressions) {
+            if (!expressions) {
+                emotionList.innerHTML = '<li class="text-slate-400">No face yet…</li>';
+                topEmotionBadge.classList.add('hidden');
+                return;
+            }
+            const items = Object.entries(expressions)
+                .sort((a, b) => b[1] - a[1])
+                .map(([k, v]) => `<li class="flex justify-between"><span class="capitalize">${k}</span><span class="tabular-nums">${fmtPct(v)}</span></li>`)
+                .join('');
+            emotionList.innerHTML = items;
+
+            const [label, score] = bestEmotion(expressions);
+            topEmotionBadge.textContent = `${label} · ${fmtPct(score)}`;
+            topEmotionBadge.classList.remove('hidden');
+        }
+
+        function drawDetections(result) {
+            const ctx = overlay.getContext('2d');
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+            if (!result) return;
+
+            const dims = { width: overlay.width, height: overlay.height };
+            const resized = faceapi.resizeResults(result, dims);
+
+            // Draw box
+            faceapi.draw.drawDetections(overlay, resized);
+
+            // Draw label with top emotion
+            const [label, score] = bestEmotion(result.expressions) || ['unknown', 0];
+            const box = resized.detection.box;
+            const pad = 6;
+            ctx.save();
+            ctx.fillStyle = 'rgba(17,24,39,0.9)'; // slate-900
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+            ctx.lineWidth = 1;
+            const text = `${label} ${fmtPct(score)}`;
+            ctx.font = '600 14px Inter, system-ui, sans-serif';
+            const tw = ctx.measureText(text).width;
+            const th = 22;
+            const x = box.x;
+            const y = Math.max(0, box.y - th - 8);
+            ctx.fillRect(x, y, tw + pad * 2, th);
+            ctx.strokeRect(x, y, tw + pad * 2, th);
+            ctx.fillStyle = 'white';
+            ctx.fillText(text, x + pad, y + th - 6);
+            ctx.restore();
+        }
+
+        async function loadModels(baseUrl) {
+            modelStatus.textContent = 'Loading models…';
+            const tasks = [
+                faceapi.nets.tinyFaceDetector.loadFromUri(baseUrl),
+                faceapi.nets.faceExpressionNet.loadFromUri(baseUrl),
+            ];
+            if (detector.value === 'ssd') {
+                tasks.push(faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl));
+            }
+            await Promise.all(tasks);
+            modelStatus.textContent = 'Models ready';
+        }
+
+        async function startCamera() {
+            const [w, h] = resolution.value.split('x').map(Number);
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: w }, height: { ideal: h } },
+                    audio: false,
+                });
+                video.srcObject = stream;
+                await video.play();
+                sizeOverlayToVideo();
+                setCamActive(true);
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                snapBtn.disabled = false;
+            } catch (err) {
+                console.error(err);
+                alert('Could not access camera. Please allow permissions and try again.');
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                stream = null;
+            }
+            video.srcObject = null;
+            setCamActive(false);
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            snapBtn.disabled = true;
+        }
+
+        function snapshot() {
+            const snap = document.createElement('canvas');
+            const ctx = snap.getContext('2d');
+            snap.width = overlay.width; snap.height = overlay.height;
+            // Mirror consideration
+            if (mirror.checked) {
+                ctx.translate(snap.width, 0); ctx.scale(-1, 1);
+            }
+            ctx.drawImage(video, 0, 0, snap.width, snap.height);
+            // Merge overlay
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.drawImage(overlay, 0, 0);
+            const url = snap.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = url; a.download = `snapshot-${Date.now()}.png`; a.click();
+        }
+
+        async function detectLoop() {
+            if (detecting) return; // prevent double loops
+            detecting = true;
+
+            const useTiny = detector.value === 'tiny';
+            const options = useTiny
+                ? new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: parseFloat(minConf.value || '0.5') })
+                : new faceapi.SsdMobilenetv1Options({ minConfidence: parseFloat(minConf.value || '0.5') });
+
+            const tick = async () => {
+                if (!stream) { detecting = false; return; }
+                const now = performance.now();
+                const dt = now - lastTick;
+                lastTick = now;
+                const fps = 1000 / Math.max(dt, 1);
+                fpsEl.textContent = `${fps.toFixed(0)} FPS`;
+
+                try {
+                    // Draw mirrored video by CSS transform for UI; overlay is drawn normally then mirrored via context
+                    sizeOverlayToVideo();
+
+                    // Perform detection
+                    let result = await faceapi
+                        .detectSingleFace(video, options)
+                        .withFaceExpressions();
+
+                    renderEmotionList(result?.expressions);
+
+                    // Handle mirroring for overlay drawing
+                    const ctx = overlay.getContext('2d');
+                    ctx.save();
+                    ctx.clearRect(0, 0, overlay.width, overlay.height);
+                    if (mirror.checked) {
+                        ctx.translate(overlay.width, 0); ctx.scale(-1, 1);
+                    }
+                    drawDetections(result);
+                    ctx.restore();
+                } catch (e) {
+                    console.warn('Detection error', e);
+                }
+            };
+
+            const intervalMs = Math.max(50, parseInt(intervalInput.value || '120', 10));
+            timer = setInterval(tick, intervalMs);
+        }
+
+        // ========= EVENT LISTENERS ========= //
+        window.addEventListener('resize', sizeOverlayToVideo);
+        mirror.addEventListener('change', () => {
+            video.style.transform = mirror.checked ? 'scaleX(-1)' : 'none';
+        });
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                await loadModels(modelPath.value.trim());
+            } catch (e) {
+                console.error(e);
+                alert('Failed to load models. Check the model path and that required files exist.');
+                return;
+            }
+            await startCamera();
+            await detectLoop();
+        });
+
+        stopBtn.addEventListener('click', () => {
+            if (timer) clearInterval(timer);
+            detecting = false;
+            stopCamera();
+            emotionList.innerHTML = '<li class="text-slate-400">Camera stopped.</li>';
+            topEmotionBadge.classList.add('hidden');
+            fpsEl.textContent = '0 FPS';
+            const ctx = overlay.getContext('2d');
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+        });
+
+        snapBtn.addEventListener('click', snapshot);
+
+        // Mirror video by default for selfie-view
+        video.style.transform = 'scaleX(-1)';
+    </script>
+</body>
+
+</html>
